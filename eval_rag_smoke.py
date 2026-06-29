@@ -1,63 +1,58 @@
-"""RAG smoke evaluator -- 3 pre-shipped questions, binary PASS/FAIL per question.
-
-The Lab smoke evaluator proves the grounding-check logic that the Integration's
-RAG grounding-rate harness scales up. It is binary by design (PASS/FAIL per
-question, exit 0 iff all PASS); it does not aggregate a rate, and it does NOT
-apply decline-exclusion -- the three smoke questions are all answerable
-against the seeded fixtures, so a decline at the Lab tier is a defect.
-
-Grounding-check methodology (Lab smoke):
-
-  A response is grounded iff (a) response.citations has length >= 1 AND
-  (b) every chunk_id in response.citations is present in the candidate set
-  returned by the retrieval call for the same question. The Lab smoke does
-  NOT apply decline-exclusion (the Lab's 3 questions are all answerable
-  against the seeded Weaviate; decline is not in scope at the Lab tier).
-
-The same paragraph appears in the published Applied Lab page so the
-documented methodology and the code that scores against it stay in sync.
-"""
-
-import json
 import os
 import sys
-
+import json
+import httpx
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
+def score_grounding(response_body, candidate_ids):
+    citations = response_body.get("citations", [])
+    # Condition A: Must contain at least one citation
+    cond_a = len(citations) >= 1
+    # Condition B: Every cited chunk_id must exist within returned candidate_ids
+    cond_b = all(cit.get("chunk_id") in candidate_ids for cit in citations)
+    return cond_a and cond_b
 
-def score_grounding(response: dict, candidate_ids) -> bool:
-    """Return True iff `response` is grounded per the Lab smoke methodology.
+def main():
+    data_path = os.path.join("data", "rag_smoke.json")
+    with open(data_path, "r") as f:
+        questions = json.load(f)
+        
+    all_passed = True
 
-    `response` is the JSON body returned by POST /rag/answer.
-    `candidate_ids` is the set of chunk_ids returned for the same question.
-    """
-    # TODO: implement per the methodology paragraph above.
-    # Both conditions must hold:
-    #   (a) at least one citation is present
-    #   (b) every cited chunk_id is in the candidate set
-    raise NotImplementedError
+    # High timeout threshold (60.0s) configured to eliminate flaky cold-cache issues
+    with httpx.Client(timeout=60.0) as client:
+        for q in questions:
+            payload = {
+                "question": q["question"],
+                "k": q.get("k", 4)
+            }
+            try:
+                response = client.post(f"{API_URL}/rag/answer", json=payload)
+                if response.status_code != 200:
+                    print(f"Question {q['question_id']}: FAIL (Status {response.status_code})")
+                    all_passed = False
+                    continue
+                
+                body = response.json()
+                # Parse candidate_ids directly out of retrieved payloads
+                candidate_ids = {chunk["chunk_id"] for chunk in body.get("retrieved", [])}
+                
+                if score_grounding(body, candidate_ids):
+                    print(f"Question {q['question_id']}: PASS")
+                else:
+                    print(f"Question {q['question_id']}: FAIL (Grounding check failed)")
+                    all_passed = False
+                    
+            except Exception as e:
+                print(f"Question {q['question_id']}: FAIL (Exception: {e})")
+                all_passed = False
 
-
-def evaluate_question(question: dict) -> bool:
-    """Issue one POST /rag/answer; return True iff the response is grounded."""
-    # TODO: POST to /rag/answer with the question + k from the fixture.
-    # Use a generous timeout -- /rag/answer cold-cache can take ~10 s.
-    # Read the candidate set from the response body's `retrieved` field.
-    # Call score_grounding(response_body, candidate_ids).
-    raise NotImplementedError
-
-
-def main() -> int:
-    """Iterate the three smoke questions, print PASS/FAIL, return 0 iff all PASS."""
-    fixture_path = os.path.join(os.path.dirname(__file__), "data", "rag_smoke.json")
-    with open(fixture_path) as fh:
-        questions = json.load(fh)
-
-    # TODO: iterate `questions`, call evaluate_question on each, print PASS or
-    # FAIL per question, return 0 iff every question is grounded, else 1.
-    raise NotImplementedError
-
+    if not all_passed:
+        sys.exit(1)
+        
+    print("All smoke tests passed successfully!")
+    sys.exit(0)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

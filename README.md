@@ -115,3 +115,8 @@ Open a PR within your fork. The PR description must include:
 This repository is provided for educational use only. See [LICENSE](LICENSE) for terms.
 
 You may clone and modify this repository for personal learning and practice, and reference code you wrote here in your professional portfolio. Redistribution outside this course is not permitted.
+
+
+## Observability
+
+This application implements production-ready observability using Prometheus metrics and structured logging. We expose three primary metric families: `requests_total` (a Counter capturing request volume labeled by path and HTTP status), `request_latency_seconds` (a Histogram tracking endpoint execution durations using standard Prometheus latency buckets), and `inflight_requests` (a Gauge monitoring concurrent active connections). The default Prometheus histogram buckets were selected to provide an optimal balance between microsecond-level health checks and multi-second RAG processing pipelines. To read these raw metrics directly, query the newly mounted `/metrics` endpoint, which outputs standard OpenMetrics text exposition formats easily scrapeable by a Prometheus server.
